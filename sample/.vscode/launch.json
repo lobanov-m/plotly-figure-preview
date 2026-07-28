@@ -1,0 +1,16 @@
+{
+  // Used inside the Extension Development Host, which opens this `sample/` folder as its workspace.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: sample_figures.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sample_figures.py",
+      // The venv lives at the repo root, one level up from this workspace.
+      "python": "${workspaceFolder}/../.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}

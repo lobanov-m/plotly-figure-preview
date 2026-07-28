@@ -1,0 +1,79 @@
+{
+  "name": "plotly-figure-preview",
+  "displayName": "Plotly Figure Preview",
+  "description": "Right-click a Plotly figure in the Python debugger's Variables pane and render it as a fully interactive chart in an editor tab.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Visualization",
+    "Data Science"
+  ],
+  "keywords": [
+    "plotly",
+    "python",
+    "debugger",
+    "figure",
+    "preview",
+    "visualization"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "plotlyPreview.show",
+        "title": "Open Plotly Figure",
+        "category": "Plotly"
+      },
+      {
+        "command": "plotlyPreview.showInNewTab",
+        "title": "Open Plotly Figure in New Tab",
+        "category": "Plotly"
+      }
+    ],
+    "menus": {
+      "debug/variables/context": [
+        {
+          "command": "plotlyPreview.show",
+          "when": "debugType == 'debugpy'",
+          "group": "navigation@10"
+        },
+        {
+          "command": "plotlyPreview.showInNewTab",
+          "when": "debugType == 'debugpy'",
+          "group": "navigation@11"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "plotlyPreview.show",
+          "when": "false"
+        },
+        {
+          "command": "plotlyPreview.showInNewTab",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p media/jsconfig.json",
+    "vscode:prepublish": "node esbuild.js --production"
+  },
+  "dependencies": {
+    "plotly.js-dist-min": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.92.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}

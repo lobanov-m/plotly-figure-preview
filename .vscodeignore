@@ -1,0 +1,21 @@
+.vscode/**
+.vscode-test/**
+src/**
+sample/**
+out/**
+.venv/**
+**/__pycache__/**
+**/*.ts
+**/*.map
+esbuild.js
+tsconfig.json
+media/jsconfig.json
+pyproject.toml
+uv.lock
+.gitignore
+
+# Exclude node_modules, but keep the bundled plotly.js the webview loads at runtime.
+node_modules/**
+!node_modules/plotly.js-dist-min/plotly.min.js
+!node_modules/plotly.js-dist-min/package.json
+!node_modules/plotly.js-dist-min/LICENSE

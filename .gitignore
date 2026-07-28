@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+*.vsix
+
+.venv/
+__pycache__/
+*.pyc
+
+.DS_Store

@@ -1,0 +1,14 @@
+[project]
+name = "plotly-vsix-sandbox"
+version = "0.1.0"
+description = "Throwaway environment for manually exercising the Plotly Figure Preview extension."
+requires-python = ">=3.10"
+dependencies = [
+    "plotly>=6.0",
+    "pandas>=2.2",
+    "numpy>=1.26",
+]
+
+[tool.uv]
+# Sandbox only — there is no package here to build or install.
+package = false

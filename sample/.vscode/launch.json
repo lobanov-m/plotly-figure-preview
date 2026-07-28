@@ -11,6 +11,26 @@
       "python": "${workspaceFolder}/../.venv/bin/python",
       "console": "integratedTerminal",
       "justMyCode": true
+    },
+    {
+      // Exercises the container / cross-machine path, where the editor and the interpreter share
+      // no filesystem. In the container:
+      //   pip install debugpy plotly
+      //   python -m debugpy --listen 0.0.0.0:5678 --wait-for-client /app/sample_figures.py
+      "name": "Python: Attach (remote or container)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}",
+          "remoteRoot": "/app"
+        }
+      ],
+      "justMyCode": true
     }
   ]
 }

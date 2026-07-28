@@ -47,28 +47,53 @@ In the Extension Development Host window (whose workspace is `sample/`):
 The script also defines `not_a_figure` and `some_string` so you can confirm non-figures are
 rejected with a readable message.
 
+## Remote sessions and containers
+
+Works unchanged over Remote-SSH, Dev Containers, WSL, and plain `debugpy` attach to a container or
+another host. **Nothing is written to disk**, so the editor and the interpreter do not need to share
+a filesystem — the figure travels entirely over the Debug Adapter Protocol.
+
+The only requirement is that `plotly` is importable *in the interpreter being debugged*. It does not
+need to be installed on the machine running VS Code.
+
+For the attach case, run this inside the container:
+
+```bash
+pip install debugpy plotly
+python -m debugpy --listen 0.0.0.0:5678 --wait-for-client your_script.py
+```
+
+then use the **Python: Attach (remote or container)** configuration in
+[sample/.vscode/launch.json](sample/.vscode/launch.json), adjusting `pathMappings` to match.
+
 ## How it works
 
 1. The `debug/variables/context` menu hands the command the selected variable, including its
    `evaluateName`.
 2. The extension resolves the top stack frame of the stopped thread via the Debug Adapter Protocol
    (`threads` → `stackTrace`).
-3. It evaluates `plotly.io.write_json(<var>, '<tmpfile>')` **inside the debuggee**, then reads the
-   file back.
-4. The JSON is posted to a webview that renders it with `Plotly.react`.
+3. Inside the debuggee, one `evaluate` serializes the figure and stashes it on `builtins`:
+   `base64(zlib(plotly.io.to_json(fig)))`.
+4. The extension reads that payload back in 32 KB slices, verifies the reassembled length against
+   the length the debuggee reported, then inflates and parses it.
+5. The JSON is posted to a webview that renders it with `Plotly.react`.
 
-Step 3 goes through a temp file rather than returning the JSON as an expression result because
-debugpy truncates long `repr` values — a figure of any realistic size would come back silently
-corrupted. `sample_figures.py` includes a 50,000-point trace to exercise this.
+**Why chunked instead of one call:** debugpy truncates `evaluate` results at **65,538 characters**
+(65,536 plus the repr's two quotes) — measured directly against debugpy 1.8.21. Returning
+`fig.to_json()` in one shot would silently corrupt any figure past that size. `sample_figures.py`
+includes a 50,000-point trace, which is 1.37 MB of JSON and 1.12 MB after compression and encoding:
+36 round trips, about 0.3 s locally.
+
+The stash key is a fresh UUID per inspection, so concurrent inspections cannot collide, and it is
+popped off `builtins` in a `finally`.
 
 ## Limitations
 
 - **Top frame only.** The context-menu argument carries no frame id, so expressions are evaluated
   against the top stack frame. Selecting a caller frame in the Call Stack pane and inspecting a
   local from *that* frame will report the name as unresolvable.
-- **Local debugging only.** The temp file is written on the debuggee's filesystem. Remote, WSL, or
-  container interpreters that don't share a filesystem with the editor are not supported.
 - `plotly` must be installed in the interpreter being debugged, not just in the extension host.
+- The debuggee must be paused; the transfer needs a live frame to evaluate against.
 
 ## Packaging
 

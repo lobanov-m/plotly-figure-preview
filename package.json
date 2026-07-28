@@ -22,6 +22,10 @@
     "visualization"
   ],
   "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
   "activationEvents": [],
   "contributes": {
     "commands": [

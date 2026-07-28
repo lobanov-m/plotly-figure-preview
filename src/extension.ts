@@ -24,7 +24,7 @@ async function open(arg: DebugVariableContext, panels: PanelManager, mode: Panel
 	try {
 		const { name, figure } = await vscode.window.withProgress(
 			{ location: vscode.ProgressLocation.Window, title: 'Loading Plotly figure…' },
-			() => fetchFigure(arg),
+			(progress) => fetchFigure(arg, progress),
 		);
 		panels.render(name, figure, mode);
 	} catch (err) {

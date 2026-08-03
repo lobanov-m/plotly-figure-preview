@@ -33,7 +33,7 @@ Press <kbd>F5</kbd> ("Run Extension") to launch an Extension Development Host.
 The dev host opens the **`sample/` folder**, not the repo root — VS Code refuses to open the same
 folder in two windows, and the root is already open in the window you press <kbd>F5</kbd> from. The
 debug config and interpreter setting the dev host needs therefore live in
-[sample/.vscode/](sample/.vscode/) and point back at the root `.venv` via `../`.
+`sample/.vscode/` and point back at the root `.venv` via `../`.
 
 ## Trying it out
 
@@ -64,7 +64,7 @@ python -m debugpy --listen 0.0.0.0:5678 --wait-for-client your_script.py
 ```
 
 then use the **Python: Attach (remote or container)** configuration in
-[sample/.vscode/launch.json](sample/.vscode/launch.json), adjusting `pathMappings` to match.
+`sample/.vscode/launch.json`, adjusting `pathMappings` to match.
 
 ## How it works
 

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { collectConsolePayload, installConsoleHelper } from './debugBridge';
+import { collectConsolePayload, installConsoleHelper, PYTHON_DEBUG_TYPES } from './debugBridge';
 import { encodeOptions, toPreview } from './preview';
 import type { PanelManager, PanelMode } from './panels';
 
@@ -17,11 +17,16 @@ import type { PanelManager, PanelMode } from './panels';
  * notice that the call happened and collect what it left behind.
  */
 export function registerDebugConsole(panels: PanelManager): vscode.Disposable {
-	return vscode.debug.registerDebugAdapterTrackerFactory('debugpy', {
-		createDebugAdapterTracker(session) {
+	const factory = {
+		createDebugAdapterTracker(session: vscode.DebugSession) {
 			return new ConsoleTracker(session, panels);
 		},
-	});
+	};
+	// One registration per type: notebook and Interactive Window debugging go through the Jupyter
+	// extension's own adapters, but debugpy is underneath all three.
+	return vscode.Disposable.from(
+		...[...PYTHON_DEBUG_TYPES].map((type) => vscode.debug.registerDebugAdapterTrackerFactory(type, factory)),
+	);
 }
 
 class ConsoleTracker implements vscode.DebugAdapterTracker {

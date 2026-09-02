@@ -35,6 +35,25 @@ const HELPER = '__pfp_v1__';
 /** Where the Debug Console helper leaves a payload for us to collect. */
 const CONSOLE_SLOT = '__pfp_console__';
 
+/**
+ * Debug session types that run Python through debugpy.
+ *
+ * `debugpy` is a plain script or an attach; the other two are the Jupyter extension's adapters for
+ * debugging a notebook cell and the Interactive Window. All three speak the same protocol and take
+ * the same expressions, so everything downstream treats them alike.
+ */
+export const PYTHON_DEBUG_TYPES = new Set([
+	'debugpy',
+	'Python Kernel Debug Adapter',
+	'Python Interactive Window Debug Adapter',
+]);
+
+/** The subset of those that are debugging a notebook — the cell kind and the Interactive Window. */
+export const NOTEBOOK_DEBUG_TYPES = new Set([
+	'Python Kernel Debug Adapter',
+	'Python Interactive Window Debug Adapter',
+]);
+
 export interface Progress {
 	report(value: { message?: string; increment?: number }): void;
 }
@@ -55,6 +74,28 @@ function helperLiteral(): string {
 		compressedHelper = deflateSync(Buffer.from(HELPER_SOURCE, 'utf8'), { level: 9 }).toString('base64');
 	}
 	return quote(compressedHelper);
+}
+
+/**
+ * One Python expression that unpacks the helper into a throwaway namespace, runs it, and evaluates
+ * to the payload — leaving nothing of itself behind in the interpreter.
+ *
+ * Shared by the two transports. Over the Debug Adapter Protocol the result is stashed and read back
+ * in slices, because debugpy truncates long results; in a notebook kernel it is simply printed,
+ * because `Kernel.executeCode` has no such limit.
+ */
+export function payloadExpression(
+	expression: string,
+	displayName: string,
+	kind: PayloadKind,
+	options: EncodeOptions,
+): string {
+	const source = `__import__('zlib').decompress(__import__('base64').b64decode(${helperLiteral()}))`;
+	return (
+		`(lambda ns: (__import__('builtins').exec(${source}, ns), ` +
+		`ns[${quote(HELPER)}](${expression}, ${quote(kind)}, ${quote(displayName)}, ` +
+		`${optionsLiteral(options)}))[1])({})`
+	);
 }
 
 /**
@@ -87,12 +128,9 @@ export async function fetchPayload(
 		const encoded = await readChunks(session, frameId, key, stash, total, progress);
 		return decode(encoded, displayName);
 	} finally {
-		// Drop both the payload and the helper without shipping their contents back over the wire.
-		await evaluate(
-			session,
-			frameId,
-			`(${stash}.pop(${quote(key)}, None), ${stash}.pop(${quote(HELPER)}, None), None)[2]`,
-		).catch(() => {
+		// Drop the payload without shipping its contents back over the wire. The helper itself
+		// never reached `builtins`: it lives and dies inside the expression above.
+		await evaluate(session, frameId, `(${stash}.pop(${quote(key)}, None), None)[1]`).catch(() => {
 			/* best effort — a stray entry on builtins is not worth bothering the user about */
 		});
 	}
@@ -162,14 +200,11 @@ async function topFrame(session: vscode.DebugSession, threadId: number): Promise
 /**
  * Installs the helper and runs it, in a single `evaluate`.
  *
- * One round trip rather than two, so a concurrent inspection cannot pop the helper off `builtins`
- * in the window between installing it and calling it. The list literal fixes the order: `exec`
- * runs first, and only then is `__pfp_v1__` looked up.
- *
- * The helper is exec'd into a throwaway namespace and only its entry point is copied onto
- * `builtins`. Exec'ing straight into `builtins.__dict__` would be shorter, but it would also
- * overwrite `builtins.__doc__` with the helper's module docstring and leave `__builtins__` and the
- * helper's private factory behind — three surprises to plant in somebody else's interpreter.
+ * One round trip, and nothing of the helper outlives it: `payloadExpression` unpacks it into a
+ * throwaway namespace, so only the payload is stashed. Exec'ing straight into `builtins.__dict__`
+ * would be shorter, but it would also overwrite `builtins.__doc__` with the helper's module
+ * docstring and leave `__builtins__` and the helper's private factory behind — three surprises to
+ * plant in somebody else's interpreter.
  */
 async function prepare(
 	session: vscode.DebugSession,
@@ -181,15 +216,10 @@ async function prepare(
 	key: string,
 	stash: string,
 ): Promise<void> {
-	const source =
-		`__import__('zlib').decompress(__import__('base64').b64decode(${helperLiteral()}))`;
-	const install =
-		`(lambda ns: (__import__('builtins').exec(${source}, ns), ` +
-		`${stash}.__setitem__(${quote(HELPER)}, ns[${quote(HELPER)}]))[1])({})`;
-	const call = `${HELPER}(${expression}, ${quote(kind)}, ${quote(displayName)}, ${optionsLiteral(options)})`;
+	const call = payloadExpression(expression, displayName, kind, options);
 
 	try {
-		await evaluate(session, frameId, `[${install}, ${stash}.__setitem__(${quote(key)}, ${call})][1]`);
+		await evaluate(session, frameId, `${stash}.__setitem__(${quote(key)}, ${call})`);
 	} catch (err) {
 		throw explain(err, displayName);
 	}
@@ -243,7 +273,7 @@ async function readChunks(
 	return encoded;
 }
 
-function decode(encoded: string, displayName: string): unknown {
+export function decode(encoded: string, displayName: string): unknown {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(inflateSync(Buffer.from(encoded, 'base64')).toString('utf8'));

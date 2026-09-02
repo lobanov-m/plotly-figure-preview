@@ -2,7 +2,7 @@
   "name": "plotly-figure-preview",
   "displayName": "Plotly & Image Preview for Python Debugging",
   "description": "Right-click a Plotly figure, numpy array, torch tensor or PIL image in the Python debugger's Variables pane — or select an expression and hit a hotkey — and see it rendered in an editor tab.",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -70,52 +70,38 @@
         "category": "Python Preview"
       }
     ],
-    "keybindings": [
-      {
-        "command": "plotlyPreview.showSelection",
-        "key": "ctrl+alt+v",
-        "mac": "cmd+alt+v",
-        "when": "editorTextFocus && debugState == 'stopped'"
-      },
-      {
-        "command": "plotlyPreview.showSelectionInNewTab",
-        "key": "ctrl+alt+shift+v",
-        "mac": "cmd+alt+shift+v",
-        "when": "editorTextFocus && debugState == 'stopped'"
-      }
-    ],
     "menus": {
       "debug/variables/context": [
         {
           "command": "plotlyPreview.show",
-          "when": "debugType == 'debugpy'",
+          "when": "debugType == 'debugpy' || debugType == 'Python Kernel Debug Adapter' || debugType == 'Python Interactive Window Debug Adapter'",
           "group": "navigation@10"
         },
         {
           "command": "plotlyPreview.showInNewTab",
-          "when": "debugType == 'debugpy'",
+          "when": "debugType == 'debugpy' || debugType == 'Python Kernel Debug Adapter' || debugType == 'Python Interactive Window Debug Adapter'",
           "group": "navigation@11"
         },
         {
           "command": "plotlyPreview.showImage",
-          "when": "debugType == 'debugpy'",
+          "when": "debugType == 'debugpy' || debugType == 'Python Kernel Debug Adapter' || debugType == 'Python Interactive Window Debug Adapter'",
           "group": "navigation@12"
         },
         {
           "command": "plotlyPreview.showImageInNewTab",
-          "when": "debugType == 'debugpy'",
+          "when": "debugType == 'debugpy' || debugType == 'Python Kernel Debug Adapter' || debugType == 'Python Interactive Window Debug Adapter'",
           "group": "navigation@13"
         }
       ],
       "editor/context": [
         {
           "command": "plotlyPreview.showSelection",
-          "when": "editorTextFocus && debugState == 'stopped' && editorLangId == python",
+          "when": "editorLangId == python && (debugState == 'stopped' || notebookEditorFocused)",
           "group": "navigation@10"
         },
         {
           "command": "plotlyPreview.showSelectionInNewTab",
-          "when": "editorTextFocus && debugState == 'stopped' && editorLangId == python",
+          "when": "editorLangId == python && (debugState == 'stopped' || notebookEditorFocused)",
           "group": "navigation@11"
         }
       ],
@@ -138,11 +124,11 @@
         },
         {
           "command": "plotlyPreview.showSelection",
-          "when": "debugState == 'stopped'"
+          "when": "debugState == 'stopped' || notebookEditorFocused"
         },
         {
           "command": "plotlyPreview.showSelectionInNewTab",
-          "when": "debugState == 'stopped'"
+          "when": "debugState == 'stopped' || notebookEditorFocused"
         }
       ]
     },

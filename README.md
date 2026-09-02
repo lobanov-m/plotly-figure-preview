@@ -29,14 +29,13 @@ Pause at a breakpoint in a Python (`debugpy`) session, then either **right-click
 | **Open Image** | Reuses a single shared **Image Preview** tab |
 | **Open Image in New Tab** | Opens an independent tab |
 
-…or **select an expression in the editor and press a key**:
+…or **select an expression and run "Preview Selected Expression"** — from the editor's right-click
+menu, from the Command Palette, or from a key you bind yourself.
 
-| Shortcut | Behaviour |
-| --- | --- |
-| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> (<kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> on macOS) | Preview the selection in the shared tab |
-| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> | Preview the selection in a new tab |
+There are no default key bindings: open **Keyboard Shortcuts**, search for *Python Preview*, and
+bind **Preview Selected Expression** and **… in New Tab** to whatever is free on your keyboard.
 
-With nothing selected, the identifier under the cursor is used. The shortcut works out for itself
+With nothing selected, the identifier under the cursor is used. The command works out for itself
 whether it is looking at a figure or an image, and it evaluates an *expression* rather than a named
 variable — so it reaches things the Variables pane cannot name on its own:
 
@@ -47,9 +46,6 @@ logits.softmax(0)[1]     # a computed channel
 frame[..., ::-1]         # BGR to RGB
 ```
 
-Both shortcuts are also on the editor's right-click menu while the debugger is paused, and can be
-rebound from **Keyboard Shortcuts** (search for "Python Preview").
-
 …or **type it in the Debug Console**:
 
 ```python
@@ -58,9 +54,30 @@ preview(img, True)        # a new tab
 preview(batch[3].cpu())   # any expression at all
 ```
 
+## Notebooks
+
+Everything above works in a `.ipynb` too, and there are two ways in depending on whether a debugger
+is involved:
+
+- **Not debugging** — the ordinary notebook case. Run your cells, select an expression in one, and
+  run **Preview Selected Expression**. The value is read straight out of the notebook's Jupyter
+  kernel, so there is no need to set a breakpoint just to look at an array. Requires the Jupyter
+  extension and a kernel that has already been started (run a cell first).
+- **Debugging a cell**, or the **Interactive Window** — these run through the Jupyter extension's
+  own debug adapters rather than plain `debugpy`, and every entry point is available there as well:
+  the Variables pane menu, the selection command, and `preview()` in the Debug Console.
+
+When a paused Python debugger is available it wins, because it knows which frame you are stopped in.
+Otherwise the notebook's kernel is used. An unrelated debug session — a Node app, say — does not
+interfere.
+
+Reading from the kernel runs the expression there, exactly as the debugger path runs it in the
+debuggee. It goes through `Kernel.executeCode`, which does not touch the execution count or the
+cell history, and it leaves no names behind in your namespace.
+
 ## Which stack frame it evaluates in
 
-Whatever you have selected in the **Call Stack** pane. That is the frame whose locals the Variables
+When a debugger is what is being used: whatever you have selected in the **Call Stack** pane. That is the frame whose locals the Variables
 pane is showing and the frame the Debug Console types into, so all three entry points agree with
 what you are looking at. Select a caller frame and its locals become previewable; select nothing and
 the top frame of a stopped thread is used.
@@ -152,6 +169,9 @@ In the Extension Development Host window (whose workspace is `sample/`):
 3. At the breakpoint, right-click a variable in **Variables** — or select an expression in the
    editor and press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>.
 
+`sample_notebook.ipynb` is the notebook equivalent: run its cells, then select an expression and
+run **Preview Selected Expression** — no breakpoint anywhere.
+
 `sample_images.py` covers uint8 RGB, a float depth map, logits straddling zero, an array with NaN
 holes, RGBA with a real alpha channel, a bool mask, 16-bit data, channel-first layout, a batch, an
 over-budget 12-megapixel array, four flavours of PIL image and (when torch is installed) tensors.
@@ -182,7 +202,7 @@ then use the **Python: Attach (remote or container)** configuration in
 ## How it works
 
 1. The `debug/variables/context` menu hands the command the selected variable, including its
-   `evaluateName`; the keyboard shortcut supplies the editor selection instead.
+   `evaluateName`; the selection command supplies the editor selection instead.
 2. The extension takes the frame selected in the Call Stack (`vscode.debug.activeStackItem`),
    falling back to the top frame of a stopped thread via the Debug Adapter Protocol
    (`threads` → `stackTrace`) when nothing is selected.
@@ -206,6 +226,11 @@ That tracker is registered when the extension activates, which is why `activatio
 until one of the commands was invoked — leaving `preview` undefined in a session that had never used
 the menu. Do not remove it because the extension looks like it has no startup work to do.
 
+A notebook with no debug session takes a different route entirely: the same helper and the same
+payload, but shipped through the Jupyter extension's `Kernel.executeCode` and simply printed. That
+transport has no truncation limit — a 4.4 MB payload arrives in one stream message — so none of the
+slicing below applies to it.
+
 **Why chunked instead of one call:** debugpy truncates `evaluate` results at **65,538 characters**
 (65,536 plus the repr's two quotes) — measured directly against debugpy 1.8.21. Returning
 `fig.to_json()` in one shot would silently corrupt any figure past that size. `sample_figures.py`
@@ -216,9 +241,12 @@ The stash key is a fresh UUID per inspection, so concurrent inspections cannot c
 
 ## Limitations
 
-- The keyboard shortcut cannot read the selection in the **Variables** pane — VS Code does not
+- The selection command cannot read the selection in the **Variables** pane — VS Code does not
   expose it to extensions — so it uses the editor selection. Use the right-click menu in the
   Variables pane, the Debug Console, or select the name in the editor.
+- In a notebook with no debugger there is no Variables pane to right-click: the selection command
+  and the Command Palette are the way in. The Jupyter extension's own variables view is not
+  extensible.
 - The Debug Console function stays bound to `builtins` for the life of the session, unlike the
   menu and hotkey paths, which pop everything they install. It has to: you are going to type its
   name.

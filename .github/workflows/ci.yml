@@ -63,7 +63,7 @@ jobs:
           npx vsce package --out "${{ steps.version.outputs.vsix }}"
           sha256sum "${{ steps.version.outputs.vsix }}" | tee "${{ steps.version.outputs.vsix }}.sha256"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: vsix
           path: |
@@ -79,7 +79,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: vsix
           path: release

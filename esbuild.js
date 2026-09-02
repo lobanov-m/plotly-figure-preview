@@ -29,6 +29,9 @@ async function main() {
 		target: 'node18',
 		outfile: 'dist/extension.js',
 		external: ['vscode'],
+		// The debuggee-side helper is inlined as a string and shipped over the Debug Adapter
+		// Protocol, so it must stay readable Python rather than be bundled as JavaScript.
+		loader: { '.py': 'text' },
 		minify: production,
 		sourcemap: !production,
 		sourcesContent: false,

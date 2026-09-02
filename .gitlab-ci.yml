@@ -1,0 +1,114 @@
+# Builds the .vsix on every push, and on a version tag publishes it to the project's Package
+# Registry and attaches it to a GitLab Release.
+#
+# To cut a release:
+#   1. bump "version" in package.json and commit it
+#   2. git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag must match the version in package.json (with or without a leading "v"); the build fails
+# loudly rather than shipping a .vsix whose filename disagrees with its tag.
+
+stages:
+  - build
+  - upload
+  - release
+
+variables:
+  PACKAGE_NAME: plotly-figure-preview
+  # Generic Packages API for this project — a permanent home for the .vsix, unlike job artifacts,
+  # which expire.
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+    # Don't run a duplicate branch pipeline alongside the merge-request one.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+build:
+  stage: build
+  image: node:20-bookworm-slim
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run typecheck
+    - VERSION="$(node -p "require('./package.json').version")"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ] && [ "$CI_COMMIT_TAG" != "$VERSION" ] && [ "$CI_COMMIT_TAG" != "v$VERSION" ]; then
+        echo "Tag '$CI_COMMIT_TAG' does not match package.json version '$VERSION'." >&2
+        exit 1
+      fi
+    # `vsce package` runs the vscode:prepublish script, which is the production esbuild bundle.
+    - npx vsce package --out "${PACKAGE_NAME}-${VERSION}.vsix"
+    - sha256sum "${PACKAGE_NAME}-${VERSION}.vsix" | tee "${PACKAGE_NAME}-${VERSION}.vsix.sha256"
+    # Hand the version and filename to the later stages.
+    - |
+      {
+        echo "VERSION=$VERSION"
+        echo "VSIX=${PACKAGE_NAME}-${VERSION}.vsix"
+        echo "VSIX_SHA256=$(cut -d' ' -f1 < "${PACKAGE_NAME}-${VERSION}.vsix.sha256")"
+      } > build.env
+  artifacts:
+    name: "${PACKAGE_NAME}-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - "*.vsix"
+      - "*.vsix.sha256"
+    expire_in: 30 days
+    reports:
+      dotenv: build.env
+
+upload:
+  stage: upload
+  image:
+    name: curlimages/curl:latest
+    entrypoint: [""]
+  needs:
+    - job: build
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      curl --fail-with-body --silent --show-error \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "${VSIX}" \
+        "${PACKAGE_REGISTRY_URL}/${PACKAGE_NAME}/${VERSION}/${VSIX}"
+
+release:
+  stage: release
+  image:
+    name: registry.gitlab.com/gitlab-org/release-cli:latest
+    entrypoint: [""]
+  needs:
+    - job: build
+      artifacts: true
+    - job: upload
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Publishing release ${CI_COMMIT_TAG} (${VSIX})"
+  release:
+    tag_name: "${CI_COMMIT_TAG}"
+    name: "${PACKAGE_NAME} ${VERSION}"
+    description: |
+      Install with:
+
+          code --install-extension ${VSIX}
+
+      or in VS Code: **Extensions** → **…** → **Install from VSIX…**
+
+      `sha256: ${VSIX_SHA256}`
+    assets:
+      links:
+        - name: "${VSIX}"
+          url: "${PACKAGE_REGISTRY_URL}/${PACKAGE_NAME}/${VERSION}/${VSIX}"
+          link_type: package

@@ -26,11 +26,12 @@
 
 	window.addEventListener('message', (event) => {
 		const message = event.data;
-		if (!message || message.type !== 'render') {
+		if (!message || message.type !== 'render' || !message.preview) {
 			return;
 		}
-		vscode.setState({ name: message.name, figure: message.figure });
-		draw(message.name, message.figure);
+		const { name, figure } = message.preview;
+		vscode.setState({ name, figure });
+		draw(name, figure);
 	});
 
 	function draw(name, figure) {

@@ -1,12 +1,7 @@
 import * as vscode from 'vscode';
-import { inflateSync } from 'zlib';
+import { deflateSync, inflateSync } from 'zlib';
 import { randomUUID } from 'crypto';
-
-/** A Plotly figure, as produced by `plotly.io.to_json`. */
-export interface PlotlyFigure {
-	data: unknown[];
-	layout: Record<string, unknown>;
-}
+import HELPER_SOURCE from './python/preview.py';
 
 /**
  * The argument VS Code passes to a command invoked from the `debug/variables/context` menu.
@@ -25,7 +20,7 @@ export interface DebugVariableContext {
 }
 
 /** Raised for conditions we can explain to the user; the message is shown verbatim. */
-export class FigureError extends Error {}
+export class PreviewError extends Error {}
 
 /**
  * debugpy truncates `evaluate` results at 65,538 characters (65,536 plus the two quotes of the
@@ -34,61 +29,79 @@ export class FigureError extends Error {}
  */
 const CHUNK_SIZE = 32_000;
 
+/** Name the helper is installed under inside the debuggee. Bump with the protocol. */
+const HELPER = '__pfp_v1__';
+
 export interface Progress {
 	report(value: { message?: string; increment?: number }): void;
 }
 
+/** What the caller wants back: a specific kind, or `auto` to let the debuggee decide. */
+export type PayloadKind = 'plotly' | 'image' | 'auto';
+
+export interface EncodeOptions {
+	maxPixels: number;
+	normalize: 'auto' | 'always' | 'never';
+}
+
+/** Compressed once per extension host, not once per inspection. */
+let compressedHelper: string | undefined;
+
+function helperLiteral(): string {
+	if (compressedHelper === undefined) {
+		compressedHelper = deflateSync(Buffer.from(HELPER_SOURCE, 'utf8'), { level: 9 }).toString('base64');
+	}
+	return quote(compressedHelper);
+}
+
 /**
- * Reads a Plotly figure out of a paused Python debug session.
+ * Runs the preview helper against `expression` in a paused Python debug session and returns the
+ * JSON payload it produced.
  *
- * The payload is moved entirely over the Debug Adapter Protocol — compressed, base64-encoded and
- * pulled back in slices — so it never touches a filesystem. That is what makes this work when the
- * debuggee is on another machine or inside a container, where the editor and the interpreter share
- * no directories.
+ * Everything moves over the Debug Adapter Protocol — the helper source in, the payload back out,
+ * compressed, base64-encoded and read in slices. Nothing touches a filesystem, which is what makes
+ * this work when the debuggee is in a container or on another machine with no shared directories.
  */
-export async function fetchFigure(
-	ctx: DebugVariableContext,
+export async function fetchPayload(
+	expression: string,
+	displayName: string,
+	kind: PayloadKind,
+	options: EncodeOptions,
+	sessionId: string | undefined,
 	progress?: Progress,
-): Promise<{ name: string; figure: PlotlyFigure }> {
-	const variable = ctx?.variable;
-	if (!variable) {
-		throw new FigureError('No debugger variable was selected.');
-	}
-
-	// `evaluateName` is the fully-qualified path (e.g. `self.fig`); `name` is just the leaf.
-	const expression = variable.evaluateName ?? variable.name;
-	if (!expression) {
-		throw new FigureError('This variable cannot be evaluated by name.');
-	}
-
-	const session = findSession(ctx);
+): Promise<unknown> {
+	const session = findSession(sessionId);
 	const frameId = await resolveFrameId(session);
 
 	// Stashed on `builtins` so the follow-up reads can find it from any frame, and keyed uniquely
 	// so concurrent inspections cannot collide.
-	const key = `__plotly_vsix_${randomUUID().replace(/-/g, '')}__`;
+	const key = `__pfp_payload_${randomUUID().replace(/-/g, '')}__`;
 	const stash = `__import__('builtins').__dict__`;
 
 	try {
-		await prepare(session, frameId, expression, key, stash, variable.name);
-		const total = await payloadLength(session, frameId, key, stash);
+		await prepare(session, frameId, expression, displayName, kind, options, key, stash);
+		const total = await payloadLength(session, frameId, key, stash, displayName);
 		const encoded = await readChunks(session, frameId, key, stash, total, progress);
-		return { name: variable.name, figure: decode(encoded, variable.name) };
+		return decode(encoded, displayName);
 	} finally {
-		// Drop the stash without shipping its contents back over the wire.
-		await evaluate(session, frameId, `(${stash}.pop(${quote(key)}, None), None)[1]`).catch(() => {
+		// Drop both the payload and the helper without shipping their contents back over the wire.
+		await evaluate(
+			session,
+			frameId,
+			`(${stash}.pop(${quote(key)}, None), ${stash}.pop(${quote(HELPER)}, None), None)[2]`,
+		).catch(() => {
 			/* best effort — a stray entry on builtins is not worth bothering the user about */
 		});
 	}
 }
 
-function findSession(ctx: DebugVariableContext): vscode.DebugSession {
+function findSession(sessionId: string | undefined): vscode.DebugSession {
 	const session = vscode.debug.activeDebugSession;
 	if (!session) {
-		throw new FigureError('No debug session is active.');
+		throw new PreviewError('No debug session is active.');
 	}
-	if (ctx.sessionId && ctx.sessionId !== session.id) {
-		throw new FigureError('That variable belongs to a debug session that is no longer active.');
+	if (sessionId && sessionId !== session.id) {
+		throw new PreviewError('That variable belongs to a debug session that is no longer active.');
 	}
 	return session;
 }
@@ -104,7 +117,7 @@ async function resolveFrameId(session: vscode.DebugSession): Promise<number> {
 	try {
 		threads = await session.customRequest('threads', {});
 	} catch {
-		throw new FigureError('Could not read threads from the debug session. Is it paused?');
+		throw new PreviewError('Could not read threads from the debug session. Is it paused?');
 	}
 
 	for (const thread of threads.threads ?? []) {
@@ -119,27 +132,42 @@ async function resolveFrameId(session: vscode.DebugSession): Promise<number> {
 		}
 	}
 
-	throw new FigureError('The debug session is not paused at a breakpoint.');
+	throw new PreviewError('The debug session is not paused at a breakpoint.');
 }
 
-/** Serializes, compresses and base64-encodes the figure inside the debuggee, in one expression. */
+/**
+ * Installs the helper and runs it, in a single `evaluate`.
+ *
+ * One round trip rather than two, so a concurrent inspection cannot pop the helper off `builtins`
+ * in the window between installing it and calling it. The list literal fixes the order: `exec`
+ * runs first, and only then is `__pfp_v1__` looked up.
+ *
+ * The helper is exec'd into a throwaway namespace and only its entry point is copied onto
+ * `builtins`. Exec'ing straight into `builtins.__dict__` would be shorter, but it would also
+ * overwrite `builtins.__doc__` with the helper's module docstring and leave `__builtins__` and the
+ * helper's private factory behind — three surprises to plant in somebody else's interpreter.
+ */
 async function prepare(
 	session: vscode.DebugSession,
 	frameId: number,
 	expression: string,
+	displayName: string,
+	kind: PayloadKind,
+	options: EncodeOptions,
 	key: string,
 	stash: string,
-	displayName: string,
 ): Promise<void> {
-	// `plotly.io.to_json` accepts Figure, FigureWidget and plain figure dicts, and validates its
-	// input — so a non-figure raises here rather than producing garbage.
-	const code =
-		`${stash}.__setitem__(${quote(key)}, ` +
-		`__import__('base64').b64encode(__import__('zlib').compress(` +
-		`__import__('plotly').io.to_json(${expression}).encode('utf-8'), 6)).decode('ascii'))`;
+	const source =
+		`__import__('zlib').decompress(__import__('base64').b64decode(${helperLiteral()}))`;
+	const install =
+		`(lambda ns: (__import__('builtins').exec(${source}, ns), ` +
+		`${stash}.__setitem__(${quote(HELPER)}, ns[${quote(HELPER)}]))[1])({})`;
+	const call =
+		`${HELPER}(${expression}, ${quote(kind)}, ${quote(displayName)}, ` +
+		`{'maxPixels': ${Math.max(0, Math.floor(options.maxPixels))}, 'normalize': ${quote(options.normalize)}})`;
 
 	try {
-		await evaluate(session, frameId, code);
+		await evaluate(session, frameId, `[${install}, ${stash}.__setitem__(${quote(key)}, ${call})][1]`);
 	} catch (err) {
 		throw explain(err, displayName);
 	}
@@ -150,11 +178,12 @@ async function payloadLength(
 	frameId: number,
 	key: string,
 	stash: string,
+	displayName: string,
 ): Promise<number> {
 	const raw = await evaluate(session, frameId, `len(${stash}[${quote(key)}])`);
 	const total = Number.parseInt(raw.trim(), 10);
 	if (!Number.isFinite(total) || total <= 0) {
-		throw new FigureError(`The debugger returned an unexpected payload length (${raw}).`);
+		throw new PreviewError(`The debugger returned an unexpected payload length for '${displayName}' (${raw}).`);
 	}
 	return total;
 }
@@ -185,21 +214,25 @@ async function readChunks(
 	const encoded = parts.join('');
 	// Length is reported by the debuggee before transfer, so this catches any silent truncation.
 	if (encoded.length !== total) {
-		throw new FigureError(
-			`The figure was truncated in transit (expected ${total} characters, got ${encoded.length}).`,
+		throw new PreviewError(
+			`The payload was truncated in transit (expected ${total} characters, got ${encoded.length}).`,
 		);
 	}
 	return encoded;
 }
 
-function decode(encoded: string, displayName: string): PlotlyFigure {
-	let parsed: PlotlyFigure;
+function decode(encoded: string, displayName: string): unknown {
+	let parsed: unknown;
 	try {
 		parsed = JSON.parse(inflateSync(Buffer.from(encoded, 'base64')).toString('utf8'));
 	} catch (err) {
-		throw new FigureError(`Could not decode the figure for '${displayName}': ${String(err)}`);
+		throw new PreviewError(`Could not decode the payload for '${displayName}': ${String(err)}`);
 	}
-	return { data: parsed.data ?? [], layout: parsed.layout ?? {} };
+	// The helper reports conditions it can explain as data rather than as a traceback.
+	if (parsed && typeof parsed === 'object' && typeof (parsed as { error?: unknown }).error === 'string') {
+		throw new PreviewError((parsed as { error: string }).error);
+	}
+	return parsed;
 }
 
 async function evaluate(session: vscode.DebugSession, frameId: number, expression: string): Promise<string> {
@@ -208,20 +241,23 @@ async function evaluate(session: vscode.DebugSession, frameId: number, expressio
 }
 
 /** Turns a debugpy traceback into a single actionable sentence. */
-function explain(err: unknown, displayName: string): FigureError {
+function explain(err: unknown, displayName: string): PreviewError {
 	const detail = err instanceof Error ? err.message : String(err);
 
-	if (/No module named ['"]?plotly/.test(detail)) {
-		return new FigureError(
-			'Plotly is not installed in the interpreter being debugged. Install it there and restart the session.',
+	if (/No module named ['"]?numpy/.test(detail)) {
+		return new PreviewError(
+			'numpy is not installed in the interpreter being debugged. Install it there and restart the session.',
 		);
 	}
 	if (/NameError/.test(detail)) {
-		return new FigureError(
+		return new PreviewError(
 			`'${displayName}' could not be resolved in the top stack frame. Variables from caller frames are not supported.`,
 		);
 	}
-	return new FigureError(`'${displayName}' is not a Plotly figure: ${exceptionLine(detail)}`);
+	if (/SyntaxError/.test(detail)) {
+		return new PreviewError(`'${displayName}' is not a valid Python expression.`);
+	}
+	return new PreviewError(`Could not read '${displayName}': ${exceptionLine(detail)}`);
 }
 
 /**
@@ -270,5 +306,5 @@ function unrepr(result: string): string {
 
 /** Renders a value as a Python string literal. */
 function quote(value: string): string {
-	return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+	return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
 }

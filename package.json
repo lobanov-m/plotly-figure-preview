@@ -1,10 +1,14 @@
 {
   "name": "plotly-figure-preview",
-  "displayName": "Plotly Figure Preview",
-  "description": "Right-click a Plotly figure in the Python debugger's Variables pane and render it as a fully interactive chart in an editor tab.",
-  "version": "0.1.0",
+  "displayName": "Plotly & Image Preview for Python Debugging",
+  "description": "Right-click a Plotly figure, numpy array, torch tensor or PIL image in the Python debugger's Variables pane — or select an expression and hit a hotkey — and see it rendered in an editor tab.",
+  "version": "0.2.0",
   "publisher": "local",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lobanov-m/plotly-figure-preview.git"
+  },
   "engines": {
     "vscode": "^1.92.0"
   },
@@ -15,9 +19,13 @@
   ],
   "keywords": [
     "plotly",
+    "numpy",
+    "pytorch",
+    "tensor",
+    "image",
+    "pillow",
     "python",
     "debugger",
-    "figure",
     "preview",
     "visualization"
   ],
@@ -32,12 +40,46 @@
       {
         "command": "plotlyPreview.show",
         "title": "Open Plotly Figure",
-        "category": "Plotly"
+        "category": "Python Preview"
       },
       {
         "command": "plotlyPreview.showInNewTab",
         "title": "Open Plotly Figure in New Tab",
-        "category": "Plotly"
+        "category": "Python Preview"
+      },
+      {
+        "command": "plotlyPreview.showImage",
+        "title": "Open Image",
+        "category": "Python Preview"
+      },
+      {
+        "command": "plotlyPreview.showImageInNewTab",
+        "title": "Open Image in New Tab",
+        "category": "Python Preview"
+      },
+      {
+        "command": "plotlyPreview.showSelection",
+        "title": "Preview Selected Expression",
+        "category": "Python Preview"
+      },
+      {
+        "command": "plotlyPreview.showSelectionInNewTab",
+        "title": "Preview Selected Expression in New Tab",
+        "category": "Python Preview"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "plotlyPreview.showSelection",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "editorTextFocus && debugState == 'stopped'"
+      },
+      {
+        "command": "plotlyPreview.showSelectionInNewTab",
+        "key": "ctrl+alt+shift+v",
+        "mac": "cmd+alt+shift+v",
+        "when": "editorTextFocus && debugState == 'stopped'"
       }
     ],
     "menus": {
@@ -51,6 +93,28 @@
           "command": "plotlyPreview.showInNewTab",
           "when": "debugType == 'debugpy'",
           "group": "navigation@11"
+        },
+        {
+          "command": "plotlyPreview.showImage",
+          "when": "debugType == 'debugpy'",
+          "group": "navigation@12"
+        },
+        {
+          "command": "plotlyPreview.showImageInNewTab",
+          "when": "debugType == 'debugpy'",
+          "group": "navigation@13"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "plotlyPreview.showSelection",
+          "when": "editorTextFocus && debugState == 'stopped' && editorLangId == python",
+          "group": "navigation@10"
+        },
+        {
+          "command": "plotlyPreview.showSelectionInNewTab",
+          "when": "editorTextFocus && debugState == 'stopped' && editorLangId == python",
+          "group": "navigation@11"
         }
       ],
       "commandPalette": [
@@ -61,14 +125,57 @@
         {
           "command": "plotlyPreview.showInNewTab",
           "when": "false"
+        },
+        {
+          "command": "plotlyPreview.showImage",
+          "when": "false"
+        },
+        {
+          "command": "plotlyPreview.showImageInNewTab",
+          "when": "false"
+        },
+        {
+          "command": "plotlyPreview.showSelection",
+          "when": "debugState == 'stopped'"
+        },
+        {
+          "command": "plotlyPreview.showSelectionInNewTab",
+          "when": "debugState == 'stopped'"
         }
       ]
+    },
+    "configuration": {
+      "title": "Plotly & Image Preview",
+      "properties": {
+        "plotlyPreview.image.normalize": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Rescale everything except uint8 data by its own min/max.",
+            "Rescale every image by its own min/max, uint8 included.",
+            "Never rescale; clip values to 0-255 instead."
+          ],
+          "default": "auto",
+          "markdownDescription": "How array values are mapped onto the 0-255 range an image can show. Floats, signed integers and 16-bit data are meaningless as raw pixels, so `auto` rescales them by the array's own minimum and maximum and reports the range it used in the status bar."
+        },
+        "plotlyPreview.image.maxPixels": {
+          "type": "integer",
+          "default": 16000000,
+          "minimum": 0,
+          "markdownDescription": "Largest image transferred at full resolution. Anything bigger is downsampled by taking every n-th pixel, which keeps a huge array from stalling the debug session. Set to `0` to never downsample."
+        }
+      }
     }
   },
   "scripts": {
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p media/jsconfig.json",
+    "package": "vsce package",
     "vscode:prepublish": "node esbuild.js --production"
   },
   "dependencies": {
@@ -77,6 +184,7 @@
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.92.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.23.0",
     "typescript": "^5.5.0"
   }

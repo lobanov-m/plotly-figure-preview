@@ -13,6 +13,7 @@ media/jsconfig.json
 pyproject.toml
 uv.lock
 .gitignore
+.gitlab-ci.yml
 
 # Exclude node_modules, but keep the bundled plotly.js the webview loads at runtime.
 node_modules/**

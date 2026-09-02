@@ -13,6 +13,15 @@
       "justMyCode": true
     },
     {
+      "name": "Python: sample_images.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sample_images.py",
+      "python": "${workspaceFolder}/../.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       // Exercises the container / cross-machine path, where the editor and the interpreter share
       // no filesystem. In the container:
       //   pip install debugpy plotly

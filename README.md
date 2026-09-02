@@ -56,20 +56,22 @@ preview(batch[3].cpu())   # any expression at all
 
 ## Notebooks
 
-Everything above works in a `.ipynb` too, and there are two ways in depending on whether a debugger
-is involved:
+Everything above works in a `.ipynb` too, whether or not you are debugging.
 
-- **Not debugging** — the ordinary notebook case. Run your cells, select an expression in one, and
-  run **Preview Selected Expression**. The value is read straight out of the notebook's Jupyter
-  kernel, so there is no need to set a breakpoint just to look at an array. Requires the Jupyter
-  extension and a kernel that has already been started (run a cell first).
-- **Debugging a cell**, or the **Interactive Window** — these run through the Jupyter extension's
-  own debug adapters rather than plain `debugpy`, and every entry point is available there as well:
-  the Variables pane menu, the selection command, and `preview()` in the Debug Console.
+**Debugging a cell.** The dropdown next to a cell's run button offers **Debug Cell** (and **Run by
+Line**), which gives a full debug session: breakpoints, a Variables pane, a Debug Console. Those
+sessions run under the Jupyter extension's own adapters rather than plain `debugpy`, and every entry
+point works in them — the Variables pane menu, the selection command, and `preview()` in the Debug
+Console. The **Interactive Window** has its own adapter and behaves the same way.
 
-When a paused Python debugger is available it wins, because it knows which frame you are stopped in.
-Otherwise the notebook's kernel is used. An unrelated debug session — a Node app, say — does not
-interfere.
+**Without a debugger.** You do not have to set a breakpoint just to look at an array: run your cells,
+select an expression in one, and run **Preview Selected Expression**. The value is read straight out
+of the notebook's Jupyter kernel. This needs the Jupyter extension and a kernel that has already been
+started, so run a cell first.
+
+When both are available the debugger wins, because it knows which frame you are stopped in.
+Otherwise the notebook's kernel is used, and an unrelated debug session — a Node app, or a Python
+script paused in another file — does not interfere.
 
 Reading from the kernel runs the expression there, exactly as the debugger path runs it in the
 debuggee. It goes through `Kernel.executeCode`, which does not touch the execution count or the

@@ -6,9 +6,16 @@ either right-click a variable in the Variables pane:
     Open Image                 -> reuses the shared "Image Preview" tab
     Open Image in New Tab      -> opens an independent tab
 
-or select an expression in this file and press the shortcut (Ctrl+Alt+V / Cmd+Alt+V). The shortcut
-evaluates whatever is selected, so it reaches things the Variables pane cannot name on its own —
-try selecting `batch[2]`, `depth[100:200, 100:200]` or `rgb[..., 0]`.
+or select an expression in this file and press the shortcut (Ctrl+Alt+V / Cmd+Alt+V), or type it
+in the Debug Console:
+
+    preview(rgb)
+    preview(depth, True)          # a new tab
+    preview(rgb[..., 0])          # any expression
+
+The script stops twice. The second breakpoint is inside `deeper()`, where none of the fixtures are
+in scope — select `main` in the **Call Stack** pane and they all become previewable again, from the
+Variables pane, the shortcut and the console alike.
 
 `torch` is optional; the tensor fixtures are skipped when it is not installed.
 """
@@ -62,6 +69,19 @@ def rgba_gradient(size: int = 200) -> np.ndarray:
     ).astype(np.uint8)
 
 
+def deeper(scale: float) -> np.ndarray:
+    """A frame with almost nothing in it, for exercising Call Stack frame selection.
+
+    Stopped here, `rgb` and friends are out of scope. Click `main` in the Call Stack and they come
+    back — that is the frame every entry point then evaluates in.
+    """
+    local_only = np.full((32, 32), scale, dtype=np.float32)
+
+    breakpoint()  # <-- SECOND STOP: try previewing `rgb` from here, then select `main` above
+
+    return local_only
+
+
 def main() -> None:
     rgb = photo_like()                                   # (240, 320, 3) uint8
     grey = rgb[..., 0]                                   # (240, 320)    uint8
@@ -96,7 +116,9 @@ def main() -> None:
     wrong_shape = np.zeros((5, 6, 7))
 
     print("Right-click any of these in Variables, or select an expression and press Ctrl+Alt+V.")
-    breakpoint()  # <-- STOP HERE
+    breakpoint()  # <-- FIRST STOP
+
+    deeper(2.5)
 
     del rgb, grey, depth, scores, holes, rgba, mask, sixteen_bit, chw, batch, huge
     del pil_rgb, pil_grey, pil_palette, pil_float

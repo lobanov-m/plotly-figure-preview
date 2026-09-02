@@ -167,6 +167,18 @@
           "default": 16000000,
           "minimum": 0,
           "markdownDescription": "Largest image transferred at full resolution. Anything bigger is downsampled by taking every n-th pixel, which keeps a huge array from stalling the debug session. Set to `0` to never downsample."
+        },
+        "plotlyPreview.debugConsole.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Bind a `preview()` function into the debuggee so previews can be opened from the Debug Console. Because the console evaluates in the frame selected in the Call Stack, this is the way to inspect a value that only exists in a caller frame: `preview(img)`, or `preview(img, True)` for a new tab."
+        },
+        "plotlyPreview.debugConsole.functionName": {
+          "type": "string",
+          "default": "preview",
+          "pattern": "^[A-Za-z_]\\w*$",
+          "patternErrorMessage": "Must be a valid Python identifier.",
+          "markdownDescription": "Name the Debug Console function is bound to. Change it if `preview` collides with something in your own code — a name of your own always wins, and the extension quietly does nothing when it has been shadowed."
         }
       }
     }

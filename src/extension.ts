@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { PreviewError, type DebugVariableContext, type PayloadKind } from './debugBridge';
 import { fetchPreview, targetFromEditor, targetFromVariable, type Target } from './preview';
 import { PanelManager, type PanelMode } from './panels';
+import { registerDebugConsole } from './debugConsole';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const panels = new PanelManager(context.extensionUri);
@@ -19,6 +20,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		panels,
+		// `preview(x)` typed into the Debug Console, which evaluates in the selected frame.
+		registerDebugConsole(panels),
 		register('plotlyPreview.show', targetFromVariable, 'plotly', 'shared'),
 		register('plotlyPreview.showInNewTab', targetFromVariable, 'plotly', 'new'),
 		register('plotlyPreview.showImage', targetFromVariable, 'image', 'shared'),

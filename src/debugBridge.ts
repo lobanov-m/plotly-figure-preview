@@ -32,6 +32,9 @@ const CHUNK_SIZE = 32_000;
 /** Name the helper is installed under inside the debuggee. Bump with the protocol. */
 const HELPER = '__pfp_v1__';
 
+/** Where the Debug Console helper leaves a payload for us to collect. */
+const CONSOLE_SLOT = '__pfp_console__';
+
 export interface Progress {
 	report(value: { message?: string; increment?: number }): void;
 }
@@ -107,12 +110,29 @@ function findSession(sessionId: string | undefined): vscode.DebugSession {
 }
 
 /**
- * Finds a stack frame to evaluate against.
+ * Finds the stack frame to evaluate against.
  *
- * The menu argument carries no frame id, so we take the top frame of the first thread that is
- * actually stopped. Threads that are still running reject the `stackTrace` request.
+ * Whatever the user has selected in the Call Stack pane wins. That is the frame whose locals the
+ * Variables pane is showing and the frame the Debug Console types into, so it is the frame a
+ * right-click or a hotkey means — `activeStackItem` is how VS Code exposes that selection.
+ *
+ * Only when nothing is selected, or the selection belongs to a different session, do we fall back
+ * to the top frame of a thread that is stopped. Threads that are still running reject `stackTrace`.
  */
-async function resolveFrameId(session: vscode.DebugSession): Promise<number> {
+export async function resolveFrameId(session: vscode.DebugSession): Promise<number> {
+	const selected = vscode.debug.activeStackItem;
+	if (selected && selected.session.id === session.id) {
+		const frameId = (selected as vscode.DebugStackFrame).frameId;
+		if (typeof frameId === 'number') {
+			return frameId;
+		}
+		// A thread is selected rather than one of its frames: take that thread's top frame.
+		const frame = await topFrame(session, selected.threadId);
+		if (frame !== undefined) {
+			return frame;
+		}
+	}
+
 	let threads: { threads?: Array<{ id: number }> };
 	try {
 		threads = await session.customRequest('threads', {});
@@ -121,18 +141,22 @@ async function resolveFrameId(session: vscode.DebugSession): Promise<number> {
 	}
 
 	for (const thread of threads.threads ?? []) {
-		try {
-			const trace = await session.customRequest('stackTrace', { threadId: thread.id, levels: 1 });
-			const frame = trace?.stackFrames?.[0];
-			if (frame) {
-				return frame.id;
-			}
-		} catch {
-			continue; // thread is running, not stopped — try the next one
+		const frame = await topFrame(session, thread.id);
+		if (frame !== undefined) {
+			return frame;
 		}
 	}
 
 	throw new PreviewError('The debug session is not paused at a breakpoint.');
+}
+
+async function topFrame(session: vscode.DebugSession, threadId: number): Promise<number | undefined> {
+	try {
+		const trace = await session.customRequest('stackTrace', { threadId, levels: 1 });
+		return trace?.stackFrames?.[0]?.id;
+	} catch {
+		return undefined; // thread is running, not stopped
+	}
 }
 
 /**
@@ -162,9 +186,7 @@ async function prepare(
 	const install =
 		`(lambda ns: (__import__('builtins').exec(${source}, ns), ` +
 		`${stash}.__setitem__(${quote(HELPER)}, ns[${quote(HELPER)}]))[1])({})`;
-	const call =
-		`${HELPER}(${expression}, ${quote(kind)}, ${quote(displayName)}, ` +
-		`{'maxPixels': ${Math.max(0, Math.floor(options.maxPixels))}, 'normalize': ${quote(options.normalize)}})`;
+	const call = `${HELPER}(${expression}, ${quote(kind)}, ${quote(displayName)}, ${optionsLiteral(options)})`;
 
 	try {
 		await evaluate(session, frameId, `[${install}, ${stash}.__setitem__(${quote(key)}, ${call})][1]`);
@@ -307,4 +329,65 @@ function unrepr(result: string): string {
 /** Renders a value as a Python string literal. */
 function quote(value: string): string {
 	return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
+}
+
+/**
+ * Binds the Debug Console helper into the debuggee's `builtins` under `functionName`.
+ *
+ * This one stays installed for the life of the session — the user is going to type its name — so
+ * it deliberately does not get popped the way the menu path's helper does. Options are captured
+ * here, at install time.
+ */
+export async function installConsoleHelper(
+	session: vscode.DebugSession,
+	frameId: number,
+	functionName: string,
+	options: EncodeOptions,
+): Promise<void> {
+	const stash = `__import__('builtins').__dict__`;
+	const source = `__import__('zlib').decompress(__import__('base64').b64decode(${helperLiteral()}))`;
+	await evaluate(
+		session,
+		frameId,
+		`(lambda ns: (__import__('builtins').exec(${source}, ns), ` +
+			`${stash}.__setitem__(${quote(functionName)}, ns[${quote(HELPER)}].console(${optionsLiteral(options)}, ${quote(CONSOLE_SLOT)})))[1])({})`,
+	);
+}
+
+/**
+ * Collects the payload a Debug Console `preview(...)` call left behind, if there is one.
+ *
+ * Returns undefined when the slot is empty — which is the normal outcome when the user has shadowed
+ * the helper with a `preview` of their own, so it is a quiet no-op rather than an error.
+ */
+export async function collectConsolePayload(
+	session: vscode.DebugSession,
+	frameId: number,
+	progress?: Progress,
+): Promise<unknown | undefined> {
+	const stash = `__import__('builtins').__dict__`;
+	const slot = `${stash}.get(${quote(CONSOLE_SLOT)})`;
+
+	const raw = await evaluate(session, frameId, `len(${slot} or '')`);
+	const total = Number.parseInt(raw.trim(), 10);
+	if (!Number.isFinite(total) || total <= 0) {
+		return undefined;
+	}
+
+	try {
+		const encoded = await readChunks(session, frameId, CONSOLE_SLOT, stash, total, progress);
+		return decode(encoded, 'the console preview');
+	} finally {
+		await evaluate(session, frameId, `(${stash}.pop(${quote(CONSOLE_SLOT)}, None), None)[1]`).catch(() => {
+			/* best effort — the next call overwrites the slot anyway */
+		});
+	}
+}
+
+/** Renders the encode options as the Python dict literal both entry points take. */
+function optionsLiteral(options: EncodeOptions): string {
+	return (
+		`{'maxPixels': ${Math.max(0, Math.floor(options.maxPixels))}, ` +
+		`'normalize': ${quote(options.normalize)}}`
+	);
 }

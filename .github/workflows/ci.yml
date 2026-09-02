@@ -1,0 +1,106 @@
+# Builds and typechecks the extension on every push, and on a version tag publishes the .vsix as a
+# GitHub Release asset.
+#
+# To cut a release:
+#   1. bump "version" in package.json and commit it
+#   2. git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag must match the version in package.json (with or without a leading "v"); the build fails
+# loudly rather than shipping a .vsix whose filename disagrees with its tag.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run on the same ref is not worth finishing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Pushes to a branch of this repo are already covered by the push event, so skip the duplicate
+    # pull_request run. Pull requests from forks have no push event here, and do run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "$TAG" != "$VERSION" ] && [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag '$TAG' does not match package.json version '$VERSION'."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "vsix=plotly-figure-preview-$VERSION.vsix" >> "$GITHUB_OUTPUT"
+
+      # `vsce package` runs the vscode:prepublish script, which is the production esbuild bundle.
+      - name: Package
+        run: |
+          npx vsce package --out "${{ steps.version.outputs.vsix }}"
+          sha256sum "${{ steps.version.outputs.vsix }}" | tee "${{ steps.version.outputs.vsix }}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: |
+            *.vsix
+            *.vsix.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: release
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VSIX="$(ls release/*.vsix)"
+          NAME="$(basename "$VSIX")"
+          SHA="$(cut -d' ' -f1 < "$VSIX.sha256")"
+          cat > notes.md <<EOF
+          Install with:
+
+              code --install-extension $NAME
+
+          or in VS Code: **Extensions** → **…** → **Install from VSIX…**
+
+          \`sha256: $SHA\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$VSIX" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "plotly-figure-preview ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md

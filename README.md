@@ -188,10 +188,11 @@ npm run package      # -> plotly-figure-preview-<version>.vsix
 `.vscodeignore` deliberately re-includes `node_modules/plotly.js-dist-min/plotly.min.js`, which the
 webview loads at runtime.
 
-## Releases (GitLab CI)
+## Releases
 
-`.gitlab-ci.yml` builds and typechecks the extension on every push, and packages a `.vsix` as a job
-artifact. Pushing a version tag also publishes it:
+There are two equivalent pipelines — `.github/workflows/ci.yml` and `.gitlab-ci.yml` — so the repo
+builds on whichever host it is pushed to. Both typecheck and package a `.vsix` on every push and
+keep it as a build artifact. Cutting a release is the same on either:
 
 ```bash
 # bump "version" in package.json, commit, then:
@@ -199,7 +200,10 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The pipeline refuses to build if the tag and `package.json` disagree. On a matching tag it uploads
-the `.vsix` to the project's **Package Registry** (a permanent URL, unlike job artifacts, which
-expire) and creates a **GitLab Release** for the tag with that package linked as an asset, together
-with its SHA-256.
+Both refuse to build when the tag and `package.json` disagree, so a `.vsix` can never ship under a
+filename its tag contradicts.
+
+| | On a version tag |
+| --- | --- |
+| **GitHub Actions** | Creates a **GitHub Release** for the tag with the `.vsix` attached as a release asset, and its SHA-256 in the notes. Needs no secrets — the built-in `GITHUB_TOKEN` is enough |
+| **GitLab CI** | Uploads the `.vsix` to the project's **Package Registry** (a permanent URL, unlike job artifacts, which expire) and creates a **GitLab Release** linking it as an asset, with the same SHA-256 |

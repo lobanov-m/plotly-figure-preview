@@ -194,6 +194,11 @@ the encoding, leaves the payload on `builtins`, and returns the line the console
 only watches for the call to go past and then collects what it left behind, using the frame id the
 console itself supplied.
 
+That tracker is registered when the extension activates, which is why `activationEvents` declares
+`onDebug`: an extension is dormant until something wakes it, and without that event nothing would
+until one of the commands was invoked — leaving `preview` undefined in a session that had never used
+the menu. Do not remove it because the extension looks like it has no startup work to do.
+
 **Why chunked instead of one call:** debugpy truncates `evaluate` results at **65,538 characters**
 (65,536 plus the repr's two quotes) — measured directly against debugpy 1.8.21. Returning
 `fig.to_json()` in one shot would silently corrupt any figure past that size. `sample_figures.py`

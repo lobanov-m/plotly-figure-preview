@@ -2,7 +2,7 @@
   "name": "plotly-figure-preview",
   "displayName": "Plotly & Image Preview for Python Debugging",
   "description": "Right-click a Plotly figure, numpy array, torch tensor or PIL image in the Python debugger's Variables pane — or select an expression and hit a hotkey — and see it rendered in an editor tab.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -34,7 +34,9 @@
     "workspace",
     "ui"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onDebug"
+  ],
   "contributes": {
     "commands": [
       {

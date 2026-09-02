@@ -101,6 +101,13 @@ zoom buttons are on the toolbar, along with **Alpha** (checkerboard behind trans
 **Smooth** (interpolate instead of showing hard pixel edges) and **Save PNG…**. With focus in the
 image, <kbd>+</kbd> / <kbd>-</kbd> zoom, <kbd>0</kbd> fits and <kbd>1</kbd> is actual size.
 
+A new image arriving in the same tab keeps the zoom you were using — zoom to 400% to read pixel
+values and the next array shows up at 400% too. When the new image is exactly the same size the pan
+is held as well, so flipping between two versions of one picture (before and after a filter, a mask
+against its source) holds still and compares pixel against pixel; at a different size the zoom is
+kept and the image re-centred. Fit is treated as a mode rather than a zoom level: if you are looking
+at a whole image, the next one is fitted too, whatever size it is.
+
 Hovering reports the pixel under the cursor as `[row, column]` with its value. For normalized
 single-channel data it also shows the approximate original value, back-computed from the range in
 the status bar.

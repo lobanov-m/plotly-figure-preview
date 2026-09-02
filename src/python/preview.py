@@ -1,8 +1,9 @@
 """Serializer that runs *inside the debuggee*.
 
-The extension exec()s this source into the debuggee's ``builtins`` namespace and then calls
-``__pfp_v1__(obj, kind, options)``. The return value is always a JSON string, which the caller
-compresses, base64-encodes and reads back over the Debug Adapter Protocol in slices.
+The extension exec()s this source into a throwaway namespace and then either calls
+``__pfp_v1__(obj, kind, name, options)`` directly, or binds ``__pfp_v1__.console(options)`` into
+``builtins`` as ``preview`` for use from the Debug Console. Both produce the same payload: a JSON
+string, compressed, base64-encoded, and read back over the Debug Adapter Protocol in slices.
 
 Constraints this file has to respect, because it runs in somebody else's interpreter:
 
@@ -76,7 +77,13 @@ def _pfp_build():
         return numpy
 
     class PreviewError(Exception):
-        """Carries a message meant for a human; the extension shows it verbatim."""
+        """Carries a message meant for a human; the extension shows it verbatim.
+
+        Console callers see this one raw, so it is renamed out of its enclosing function: without
+        this the traceback in the Debug Console reads `_pfp_build.<locals>.PreviewError`.
+        """
+
+    PreviewError.__qualname__ = "PreviewError"
 
     # ---------------------------------------------------------------- PNG encoding
 
@@ -326,7 +333,7 @@ def _pfp_build():
             array, info, prefer_chw = from_numpy(obj, notes)
         else:
             raise PreviewError(
-                "'%s' is a %s, which is not a numpy array, a torch tensor or a PIL image."
+                "%s is a %s, which is not a numpy array, a torch tensor or a PIL image."
                 % (name, class_path(obj))
             )
 
@@ -369,25 +376,29 @@ def _pfp_build():
         except Exception as exc:
             first = str(exc).strip().splitlines()
             detail = next((line.strip() for line in first if line.strip()), type(exc).__name__)
-            raise PreviewError("'%s' is not a Plotly figure: %s" % (name, detail[:240]))
+            raise PreviewError("%s is not a Plotly figure: %s" % (name, detail[:240]))
         return '{"kind":"plotly","figure":%s}' % figure
 
-    def encode(obj, kind, name, options):
+    def build(obj, kind, name, options):
+        """Returns the payload JSON, raising PreviewError for anything explainable."""
         options = options or {}
+        if kind == "plotly":
+            return build_plotly(obj, name)
+        if kind == "image":
+            return build_image(obj, name, options)
+        # 'auto': the hotkey and console paths, where the user only said *what* to look at.
+        if is_image(obj):
+            return build_image(obj, name, options)
+        if is_plotly(obj):
+            return build_plotly(obj, name)
+        raise PreviewError(
+            "%s is a %s. This extension previews Plotly figures, numpy arrays, torch tensors "
+            "and PIL images." % (name, class_path(obj))
+        )
+
+    def encode(obj, kind, name, options):
         try:
-            if kind == "plotly":
-                return build_plotly(obj, name)
-            if kind == "image":
-                return build_image(obj, name, options)
-            # 'auto': the hotkey path, where the user only told us *what* to look at.
-            if is_image(obj):
-                return build_image(obj, name, options)
-            if is_plotly(obj):
-                return build_plotly(obj, name)
-            raise PreviewError(
-                "'%s' is a %s. This extension previews Plotly figures, numpy arrays, torch tensors "
-                "and PIL images." % (name, class_path(obj))
-            )
+            return build(obj, kind, name, options)
         except PreviewError as exc:
             return json.dumps({"error": str(exc)})
 
@@ -395,8 +406,42 @@ def _pfp_build():
         return base64.b64encode(zlib.compress(text.encode("utf-8"), 6)).decode("ascii")
 
     def entry(obj, kind, name, options=None):
-        return compress(encode(obj, kind, name, options))
+        return compress(encode(obj, kind, "'%s'" % name, options))
 
+    def summarize(obj, is_image_payload, new):
+        """The one line the Debug Console prints back."""
+        where = "a new tab" if new else (
+            "the Image Preview tab" if is_image_payload else "the Plotly Preview tab"
+        )
+        shape = getattr(obj, "shape", None)
+        what = type(obj).__name__
+        if shape is not None:
+            try:
+                what += " %s" % (tuple(int(d) for d in shape),)
+            except Exception:
+                pass
+        return "%s \u2192 %s" % (what, where)
+
+    def console(options=None, slot="__pfp_console__"):
+        """Builds the function the extension binds into builtins for Debug Console use.
+
+        Unlike `entry`, this raises rather than returning an error payload: the user typed the call
+        into the console, so the console is where the complaint belongs. The payload is left in
+        `slot` for the extension to collect; the return value is just a line of text.
+        """
+
+        def preview(obj, new=False):
+            text = build(obj, "auto", "The value passed to preview()", options)
+            # Splice the panel mode in beside the kind, so one payload carries both.
+            mode = "new" if new else "shared"
+            __import__("builtins").__dict__[slot] = compress(
+                '{"mode":"%s",%s' % (mode, text[1:])
+            )
+            return summarize(obj, text.startswith('{"kind":"image"'), new)
+
+        return preview
+
+    entry.console = console
     return entry
 
 

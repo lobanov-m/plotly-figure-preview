@@ -66,18 +66,29 @@ export async function fetchPreview(
 		progress,
 	);
 
+	return toPreview(payload, target.name);
+}
+
+/**
+ * Turns a decoded payload into something a panel can render, under the name the user will see.
+ *
+ * The name is supplied here rather than taken from the payload because only this side knows what
+ * the user actually pointed at — a variable, an editor selection, or the argument of a console
+ * call. The debuggee only ever sees the value.
+ */
+export function toPreview(payload: unknown, name: string): Preview {
 	const shape = payload as { kind?: string; figure?: PlotlyFigure; meta?: ImageMeta; png?: string };
 	if (shape?.kind === 'plotly') {
 		const figure = shape.figure ?? ({} as PlotlyFigure);
-		return { kind: 'plotly', name: target.name, figure: { data: figure.data ?? [], layout: figure.layout ?? {} } };
+		return { kind: 'plotly', name, figure: { data: figure.data ?? [], layout: figure.layout ?? {} } };
 	}
 	if (shape?.kind === 'image' && shape.meta && shape.png) {
-		return { kind: 'image', name: target.name, meta: shape.meta, png: shape.png };
+		return { kind: 'image', name, meta: { ...shape.meta, name }, png: shape.png };
 	}
-	throw new PreviewError(`The debugger returned an unrecognized payload for '${target.name}'.`);
+	throw new PreviewError(`The debugger returned an unrecognized payload for '${name}'.`);
 }
 
-function encodeOptions(): EncodeOptions {
+export function encodeOptions(): EncodeOptions {
 	const config = vscode.workspace.getConfiguration('plotlyPreview');
 	const maxPixels = config.get<number>('image.maxPixels', 16_000_000);
 	const normalize = config.get<EncodeOptions['normalize']>('image.normalize', 'auto');

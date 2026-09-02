@@ -50,6 +50,30 @@ frame[..., ::-1]         # BGR to RGB
 Both shortcuts are also on the editor's right-click menu while the debugger is paused, and can be
 rebound from **Keyboard Shortcuts** (search for "Python Preview").
 
+…or **type it in the Debug Console**:
+
+```python
+preview(img)              # the shared tab
+preview(img, True)        # a new tab
+preview(batch[3].cpu())   # any expression at all
+```
+
+## Which stack frame it evaluates in
+
+Whatever you have selected in the **Call Stack** pane. That is the frame whose locals the Variables
+pane is showing and the frame the Debug Console types into, so all three entry points agree with
+what you are looking at. Select a caller frame and its locals become previewable; select nothing and
+the top frame of a stopped thread is used.
+
+This is what the Debug Console is good for: `preview()` is an ordinary Python function bound into
+the debuggee, so it evaluates wherever the console does, and it takes any expression — no need to
+have the value selected in an editor, or named at all.
+
+It is bound lazily, the first time the session stops. A `preview` of your own always wins: the
+extension quietly does nothing when its function has been shadowed. Rename it with
+`plotlyPreview.debugConsole.functionName`, or turn the whole thing off with
+`plotlyPreview.debugConsole.enabled`.
+
 ## How array values become pixels
 
 An image can only show 0–255 per channel, so anything else has to be mapped onto that range.
@@ -87,6 +111,11 @@ the status bar.
 | --- | --- | --- |
 | `plotlyPreview.image.normalize` | `auto` | `auto` rescales everything except `uint8`; `always` rescales `uint8` too; `never` clips to 0–255 |
 | `plotlyPreview.image.maxPixels` | `16000000` | Larger images are downsampled by taking every n-th pixel, so a huge array cannot stall the debug session. `0` disables the limit |
+| `plotlyPreview.debugConsole.enabled` | `true` | Bind `preview()` into the debuggee for Debug Console use |
+| `plotlyPreview.debugConsole.functionName` | `preview` | What to call it, if `preview` collides with something of your own |
+
+Both `image.*` settings are read per inspection. The console function captures them when it is
+bound, so changing them takes effect in the console at the next debug session.
 
 ## Setup
 
@@ -147,8 +176,9 @@ then use the **Python: Attach (remote or container)** configuration in
 
 1. The `debug/variables/context` menu hands the command the selected variable, including its
    `evaluateName`; the keyboard shortcut supplies the editor selection instead.
-2. The extension resolves the top stack frame of the stopped thread via the Debug Adapter Protocol
-   (`threads` → `stackTrace`).
+2. The extension takes the frame selected in the Call Stack (`vscode.debug.activeStackItem`),
+   falling back to the top frame of a stopped thread via the Debug Adapter Protocol
+   (`threads` → `stackTrace`) when nothing is selected.
 3. One `evaluate` ships `src/python/preview.py` into the debuggee (zlib'd and base64'd, exec'd into
    a throwaway namespace), runs it against the expression, and stashes the result on `builtins`:
    `base64(zlib(json))`, where the JSON is either the figure or a PNG plus its metadata.
@@ -156,6 +186,18 @@ then use the **Python: Attach (remote or container)** configuration in
    the length the debuggee reported, then inflates and parses it.
 5. The result is posted to a webview — `Plotly.react` for figures, a canvas for images.
 6. A `finally` pops both the payload and the helper, leaving the debuggee exactly as it was found.
+
+The Debug Console route works the other way round. VS Code offers no way to intercept what you type
+into the console — a debug adapter tracker gets read access to the traffic and nothing more — so
+instead of hooking the input, the extension binds a real Python function into the debuggee. It does
+the encoding, leaves the payload on `builtins`, and returns the line the console prints. The tracker
+only watches for the call to go past and then collects what it left behind, using the frame id the
+console itself supplied.
+
+That tracker is registered when the extension activates, which is why `activationEvents` declares
+`onDebug`: an extension is dormant until something wakes it, and without that event nothing would
+until one of the commands was invoked — leaving `preview` undefined in a session that had never used
+the menu. Do not remove it because the extension looks like it has no startup work to do.
 
 **Why chunked instead of one call:** debugpy truncates `evaluate` results at **65,538 characters**
 (65,536 plus the repr's two quotes) — measured directly against debugpy 1.8.21. Returning
@@ -167,12 +209,12 @@ The stash key is a fresh UUID per inspection, so concurrent inspections cannot c
 
 ## Limitations
 
-- **Top frame only.** The context-menu argument carries no frame id, so expressions are evaluated
-  against the top stack frame. Selecting a caller frame in the Call Stack pane and inspecting a
-  local from *that* frame will report the name as unresolvable.
 - The keyboard shortcut cannot read the selection in the **Variables** pane — VS Code does not
   expose it to extensions — so it uses the editor selection. Use the right-click menu in the
-  Variables pane, or select the name in the editor.
+  Variables pane, the Debug Console, or select the name in the editor.
+- The Debug Console function stays bound to `builtins` for the life of the session, unlike the
+  menu and hotkey paths, which pop everything they install. It has to: you are going to type its
+  name.
 - `plotly` (for figures) and `numpy` (for arrays and tensors) must be installed in the interpreter
   being debugged, not just in the extension host.
 - The debuggee must be paused; the transfer needs a live frame to evaluate against.

@@ -66,6 +66,12 @@
 	function show(meta, png) {
 		const image = new Image();
 		image.onload = () => {
+			// Snapshot the view before the canvas is resized under it, so a second image landing in
+			// the same tab can be shown where the user was already looking.
+			const previous = current
+				? { scale, originX, originY, fitted, width: canvas.width, height: canvas.height }
+				: null;
+
 			source.width = image.naturalWidth;
 			source.height = image.naturalHeight;
 			sourceCtx.clearRect(0, 0, source.width, source.height);
@@ -81,7 +87,7 @@
 			statusEl.hidden = true;
 			canvas.hidden = false;
 			describe(current.meta);
-			fit();
+			resume(previous);
 		};
 		image.onerror = () => {
 			canvas.hidden = true;
@@ -163,6 +169,40 @@
 
 	function actual() {
 		zoomAround(1, stage.clientWidth / 2, stage.clientHeight / 2);
+	}
+
+	/**
+	 * Puts a newly arrived image at the zoom the user was already using.
+	 *
+	 * Fit is a mode, not a zoom level: someone looking at a whole image wants to see the whole of
+	 * the next one, whatever size it is. Someone who zoomed to 400% to read pixel values wants to
+	 * stay at 400%.
+	 *
+	 * The pan carries over only when the new image is exactly the same size, so flipping between
+	 * two versions of one picture — before and after a filter, a mask against its source — holds
+	 * still and compares pixel against pixel. At a different size that offset would mean nothing,
+	 * so the zoom is kept and the image re-centred.
+	 *
+	 * @param {{ scale: number, originX: number, originY: number, fitted: boolean, width: number,
+	 *   height: number } | null} previous the view as it was before this image replaced the last
+	 */
+	function resume(previous) {
+		if (!previous || previous.fitted) {
+			fit();
+			return;
+		}
+
+		scale = clamp(previous.scale);
+		fitted = false;
+		if (previous.width === canvas.width && previous.height === canvas.height) {
+			originX = previous.originX;
+			originY = previous.originY;
+		} else {
+			const box = stage.getBoundingClientRect();
+			originX = (box.width - canvas.width * scale) / 2;
+			originY = (box.height - canvas.height * scale) / 2;
+		}
+		apply();
 	}
 
 	/** Zooms so the image point under (cx, cy) stays under (cx, cy). */

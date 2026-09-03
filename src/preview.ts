@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import {
 	fetchPayload,
+	NOTEBOOK_DEBUG_TYPES,
 	PreviewError,
+	PYTHON_DEBUG_TYPES,
 	type DebugVariableContext,
 	type EncodeOptions,
 	type PayloadKind,
 	type Progress,
 } from './debugBridge';
+import { fetchFromKernel, hasActiveNotebook } from './kernelSource';
 
 /** A Plotly figure, as produced by `plotly.io.to_json`. */
 export interface PlotlyFigure {
@@ -57,14 +60,10 @@ export async function fetchPreview(
 	kind: PayloadKind,
 	progress?: Progress,
 ): Promise<Preview> {
-	const payload = await fetchPayload(
-		target.expression,
-		target.name,
-		kind,
-		encodeOptions(),
-		target.sessionId,
-		progress,
-	);
+	const options = encodeOptions();
+	const payload = useDebugger(target)
+		? await fetchPayload(target.expression, target.name, kind, options, target.sessionId, progress)
+		: await fetchFromKernel(target.expression, target.name, kind, options, progress);
 
 	return toPreview(payload, target.name);
 }
@@ -86,6 +85,29 @@ export function toPreview(payload: unknown, name: string): Preview {
 		return { kind: 'image', name, meta: { ...shape.meta, name }, png: shape.png };
 	}
 	throw new PreviewError(`The debugger returned an unrecognized payload for '${name}'.`);
+}
+
+/**
+ * Picks the transport: the paused debuggee, or the notebook's own kernel.
+ *
+ * The trap this avoids is a script paused in the background while the user is reading a notebook.
+ * Both contexts then look available, but only one holds the value being pointed at:
+ *
+ * - A target from the Variables pane carries the session it belongs to, so it is never in doubt.
+ * - A notebook in front of the user means that notebook's kernel — unless the debugger *is* that
+ *   notebook, which the Jupyter extension's own adapter types identify.
+ * - Otherwise a paused Python debugger, and failing that the kernel, whose errors explain what is
+ *   missing.
+ */
+function useDebugger(target: Target): boolean {
+	if (target.sessionId) {
+		return true;
+	}
+	const session = vscode.debug.activeDebugSession;
+	if (!session || !PYTHON_DEBUG_TYPES.has(session.type)) {
+		return false;
+	}
+	return hasActiveNotebook() ? NOTEBOOK_DEBUG_TYPES.has(session.type) : true;
 }
 
 export function encodeOptions(): EncodeOptions {
